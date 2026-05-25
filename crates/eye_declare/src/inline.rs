@@ -223,11 +223,15 @@ impl InlineRenderer {
     pub fn resize(&mut self, new_width: u16) -> Vec<u8> {
         let mut output = Vec::new();
 
-        // Clear visible screen and home cursor.
+        // Clear visible screen, home cursor, and clear scrollback.
         // \x1b[2J = clear entire screen
         // \x1b[H  = cursor to row 1, col 1 (home)
-        // This does NOT clear scrollback (\x1b[3J would do that).
-        output.extend_from_slice(b"\x1b[2J\x1b[H");
+        // \x1b[3J = clear scrollback buffer
+        //
+        // Clearing scrollback is required for retained inline rendering: on resize the
+        // app re-renders the entire session from state at the new width. Without \x1b[3J,
+        // the old-width content remains in scrollback and reflows incorrectly.
+        output.extend_from_slice(b"\x1b[2J\x1b[H\x1b[3J");
 
         // Reset internal state
         self.renderer.set_width(new_width);
