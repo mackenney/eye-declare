@@ -126,16 +126,18 @@ fn render_markdown(source: &str, styles: &MarkdownState) -> Text<'static> {
         if line.starts_with("```") {
             in_code_block = !in_code_block;
             if in_code_block {
-                // Opening fence — skip the line (or show language hint)
-                let lang = line.trim_start_matches('`').trim();
-                if !lang.is_empty() {
-                    lines.push(Line::from(Span::styled(
-                        format!("  {}", lang),
-                        styles.marker_style,
-                    )));
-                }
+                // Opening fence — emit the full fence line (e.g. "```" or "```rust")
+                lines.push(Line::from(Span::styled(
+                    line.to_string(),
+                    styles.marker_style,
+                )));
+            } else {
+                // Closing fence — emit plain "```"
+                lines.push(Line::from(Span::styled(
+                    "```".to_string(),
+                    styles.marker_style,
+                )));
             }
-            // Closing fence — just skip the line
             continue;
         }
 
@@ -183,6 +185,14 @@ fn render_markdown(source: &str, styles: &MarkdownState) -> Text<'static> {
         if let Some(prefix) = list_prefix {
             let content = &line[prefix.len()..];
             let mut spans = vec![Span::styled(prefix.to_string(), styles.marker_style)];
+            spans.extend(parse_inline_formatting(content, styles));
+            lines.push(Line::from(spans));
+            continue;
+        }
+
+        // Blockquote
+        if let Some(content) = line.strip_prefix("> ") {
+            let mut spans = vec![Span::styled("\u{2502} ".to_string(), styles.marker_style)];
             spans.extend(parse_inline_formatting(content, styles));
             lines.push(Line::from(spans));
             continue;
@@ -323,8 +333,20 @@ mod tests {
         let md = Markdown::new("```rust\nfn main() {}\n```");
         let state = MarkdownState::new();
         let text = render_markdown(&md.source, &state);
-        assert!(text.lines.len() >= 2);
-        assert!(text.lines.last().unwrap().to_string().contains("fn main"));
+        // opening fence + content + closing fence = 3 lines
+        assert!(text.lines.len() >= 3);
+        assert!(
+            text.lines[0].to_string().contains("```rust"),
+            "opening fence must appear"
+        );
+        assert!(
+            text.lines[1].to_string().contains("fn main"),
+            "code content must appear"
+        );
+        assert!(
+            text.lines.last().unwrap().to_string().contains("```"),
+            "closing fence must appear"
+        );
     }
 
     #[test]
