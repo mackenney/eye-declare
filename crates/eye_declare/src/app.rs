@@ -650,7 +650,33 @@ impl<S: Send + 'static> Application<S> {
             let _ = stdout.write_all(&finalize_bytes);
             let _ = stdout.flush();
         }
-        // Now drop guard: disables protocols, raw mode, restores cursor.
+
+        // Move cursor to the bottom of all rendered content before exiting.
+        //
+        // After the last render, the cursor is at the focused component's
+        // cursor-hint row (e.g. the editor input), which is inside the content
+        // area. Without this movement the subsequent \n scrolls from that
+        // mid-content position, and the shell prompt overwrites the last rows.
+        //
+        // Mirror of pi-tui TUI.stop(): move to previousLines.length (one past
+        // the last content row), then \r\n.
+        //
+        // emitted_rows is the number of rows claimed; cursor_row is the current
+        // tracked position (0-indexed). n = rows needed to reach "one past last
+        // content row". After finalize() with trailing blanks, cursor_row equals
+        // emitted_rows so n = 0 (already there). After a no-op finalize, n > 0.
+        let emitted = self.inline.emitted_rows();
+        if emitted > 0 {
+            let cur = self.inline.cursor_row();
+            let n = emitted.saturating_sub(cur);
+            if n > 0 {
+                let seq = format!("\x1b[{}B", n);
+                let _ = stdout.write_all(seq.as_bytes());
+                let _ = stdout.flush();
+            }
+        }
+
+        // Now drop guard: disables protocols, raw mode, shows cursor.
         drop(guard);
         // Two newlines: one to end the content region, one as a buffer
         // for shell prompts that use cursor manipulation (e.g.,

@@ -71,21 +71,25 @@ pub struct MarkdownState {
 }
 
 impl MarkdownState {
-    /// Create the default style configuration: cyan bold headings, yellow
-    /// inline code, green code blocks, bold/italic modifiers, dark gray
-    /// list markers.
+    /// Create the default style configuration matching pi's dark theme RGB values.
+    /// Colors sourced from pi's dark.json: mdHeading=#f0c674, mdCode=#8abeb7 (accent),
+    /// mdCodeBlock=#b5bd68 (green), mdListBullet=#8abeb7 (accent).
     pub fn new() -> Self {
         let base = Style::default();
         Self {
             base_style: base,
-            code_style: Style::default().fg(Color::Yellow),
-            block_code_style: Style::default().fg(Color::Green),
+            // mdCode: accent = #8abeb7 = Rgb(138, 190, 183)
+            code_style: Style::default().fg(Color::Rgb(138, 190, 183)),
+            // mdCodeBlock: green = #b5bd68 = Rgb(181, 189, 104)
+            block_code_style: Style::default().fg(Color::Rgb(181, 189, 104)),
             bold_style: base.add_modifier(Modifier::BOLD),
             italic_style: base.add_modifier(Modifier::ITALIC),
+            // mdHeading: #f0c674 = Rgb(240, 198, 116)
             heading_style: Style::default()
-                .fg(Color::Cyan)
+                .fg(Color::Rgb(240, 198, 116))
                 .add_modifier(Modifier::BOLD),
-            marker_style: Style::default().fg(Color::DarkGray),
+            // mdListBullet: accent = #8abeb7 = Rgb(138, 190, 183)
+            marker_style: Style::default().fg(Color::Rgb(138, 190, 183)),
         }
     }
 }
@@ -380,7 +384,7 @@ mod tests {
             .iter()
             .find(|s| s.content.contains("println!"))
             .unwrap();
-        assert_eq!(code_span.style.fg, Some(Color::Yellow));
+        assert_eq!(code_span.style.fg, Some(Color::Rgb(138, 190, 183)));
     }
 
     #[test]

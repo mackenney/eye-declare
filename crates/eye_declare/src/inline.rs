@@ -413,6 +413,11 @@ impl InlineRenderer {
         self.emitted_rows
     }
 
+    /// Current tracked cursor row (0-indexed within the inline region).
+    pub fn cursor_row(&self) -> u16 {
+        self.cursor.row
+    }
+
     /// Update the known terminal height.
     pub fn set_terminal_height(&mut self, height: u16) {
         self.terminal_height = height;
