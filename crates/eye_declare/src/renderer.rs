@@ -466,6 +466,27 @@ impl Renderer {
             .copied()
     }
 
+    /// Collect layout rects for all keyed nodes via DFS.
+    ///
+    /// Returns a map from key to layout rect for every node in the tree
+    /// that has both a `key` and a `Some(layout_rect)`. Duplicate keys
+    /// across different parents: last-DFS-wins.
+    pub fn layout_rects_by_key(&self) -> HashMap<String, Rect> {
+        let mut result = HashMap::new();
+        self.collect_keyed_rects(self.root, &mut result);
+        result
+    }
+
+    fn collect_keyed_rects(&self, id: NodeId, out: &mut HashMap<String, Rect>) {
+        let node = &self.nodes[id];
+        if let (Some(key), Some(rect)) = (&node.key, node.layout_rect) {
+            out.insert(key.clone(), rect);
+        }
+        for &child in &node.children {
+            self.collect_keyed_rects(child, out);
+        }
+    }
+
     // --- Effect registration ---
 
     /// Register a periodic tick handler for a node.
@@ -1082,6 +1103,13 @@ impl Renderer {
     /// from effects like `use_interval`.
     pub fn render(&mut self) -> Frame {
         self.refresh_dirty_views();
+
+        // Clear stale layout rects from previous frame.
+        // render_node sets layout_rect only for nodes it visits with non-zero area.
+        // Without clearing, removed or zero-area nodes retain stale rects.
+        for node in self.nodes.iter_mut() {
+            node.layout_rect = None;
+        }
         let total_height = self.measure_height(self.root, self.width);
 
         if total_height == 0 || self.width == 0 {
@@ -4710,5 +4738,83 @@ mod tests {
 
         let frame = r.render();
         assert_eq!(frame.buffer()[(0, 0)].symbol(), "o"); // "old school"
+    }
+
+    #[test]
+    fn layout_rects_by_key_empty_before_render() {
+        let r = Renderer::new(10);
+        assert!(r.layout_rects_by_key().is_empty());
+    }
+
+    #[test]
+    fn layout_rects_by_key_collects_keyed_nodes() {
+        let mut r = Renderer::new(40);
+        let container = r.push(VStack);
+
+        let mut els = Elements::new();
+        els.add_element(CounterEl::new("first")).key("alpha");
+        els.add_element(CounterEl::new("second")).key("beta");
+        els.add_element(CounterEl::new("no-key")); // no key — excluded
+        r.rebuild(container, els);
+
+        let _ = r.render();
+        let rects = r.layout_rects_by_key();
+
+        assert!(rects.contains_key("alpha"));
+        assert!(rects.contains_key("beta"));
+        assert!(!rects.contains_key("no-key"));
+        assert_eq!(rects.len(), 2);
+
+        // Verify rects have reasonable values
+        let alpha = rects["alpha"];
+        assert_eq!(alpha.width, 40);
+        assert!(alpha.height > 0);
+    }
+
+    #[test]
+    fn layout_rects_by_key_nested_dfs() {
+        let mut r = Renderer::new(40);
+        let container = r.push(VStack);
+
+        let mut inner = Elements::new();
+        inner
+            .add_element(CounterEl::new("child"))
+            .key("inner-child");
+        let mut els = Elements::new();
+        els.add_with_children(VStack, inner).key("group");
+        r.rebuild(container, els);
+
+        let _ = r.render();
+        let rects = r.layout_rects_by_key();
+
+        assert!(rects.contains_key("group"));
+        assert!(rects.contains_key("inner-child"));
+    }
+
+    #[test]
+    fn layout_rect_cleared_for_removed_nodes() {
+        let mut r = Renderer::new(40);
+        let container = r.push(VStack);
+
+        // First render with two keyed nodes
+        let mut els = Elements::new();
+        els.add_element(CounterEl::new("keep")).key("keep");
+        els.add_element(CounterEl::new("remove")).key("remove");
+        r.rebuild(container, els);
+        let _ = r.render();
+        assert!(r.layout_rects_by_key().contains_key("remove"));
+
+        // Second render without "remove"
+        let mut els = Elements::new();
+        els.add_element(CounterEl::new("keep")).key("keep");
+        r.rebuild(container, els);
+        let _ = r.render();
+
+        let rects = r.layout_rects_by_key();
+        assert!(rects.contains_key("keep"));
+        assert!(
+            !rects.contains_key("remove"),
+            "removed node should not have a stale rect"
+        );
     }
 }

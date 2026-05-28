@@ -436,6 +436,20 @@ impl InlineRenderer {
         self.prev_frame.as_ref().map(|f| f.buffer())
     }
 
+    /// Returns the layout rect for every keyed node in the tree.
+    ///
+    /// Performs a DFS walk of the entire component tree after render,
+    /// collecting `(key, layout_rect)` pairs. Only nodes with both a
+    /// `key` and a `Some(layout_rect)` are included.
+    ///
+    /// Must be called after `render()` for meaningful results. Before the
+    /// first render, returns an empty map.
+    pub fn layout_rects_by_key(
+        &self,
+    ) -> std::collections::HashMap<String, ratatui_core::layout::Rect> {
+        self.renderer.layout_rects_by_key()
+    }
+
     /// Detect which children of `container` have fully scrolled into
     /// terminal scrollback and can be committed.
     ///
