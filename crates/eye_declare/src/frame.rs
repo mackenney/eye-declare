@@ -13,7 +13,6 @@ impl Frame {
         Self { buffer }
     }
 
-    #[cfg(test)]
     pub fn buffer(&self) -> &Buffer {
         &self.buffer
     }

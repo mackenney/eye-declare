@@ -428,6 +428,14 @@ impl InlineRenderer {
         self.renderer.node_last_height(id)
     }
 
+    /// Returns the buffer from the most recent `render()` call, if any.
+    ///
+    /// The buffer contains the full rendered frame as a grid of ratatui `Cell`s.
+    /// Returns `None` if `render()` has not been called yet.
+    pub fn snapshot_buffer(&self) -> Option<&ratatui_core::buffer::Buffer> {
+        self.prev_frame.as_ref().map(|f| f.buffer())
+    }
+
     /// Detect which children of `container` have fully scrolled into
     /// terminal scrollback and can be committed.
     ///
@@ -1269,5 +1277,27 @@ mod tests {
         } else {
             panic!("expected a newline in the growth output");
         }
+    }
+
+    #[test]
+    fn snapshot_buffer_none_before_render() {
+        let ir = InlineRenderer::new_with_height(10, 24);
+        assert!(ir.snapshot_buffer().is_none());
+    }
+
+    #[test]
+    fn snapshot_buffer_some_after_render() {
+        let mut ir = InlineRenderer::new_with_height(10, 24);
+        let id = ir.push(TextBlock);
+        ir.state_mut::<TextBlock>(id).push("hello".to_string());
+        let _ = ir.render();
+        let buf = ir
+            .snapshot_buffer()
+            .expect("buffer should exist after render");
+        assert_eq!(buf.area().width, 10);
+        assert_eq!(buf.area().height, 1);
+        // Verify cell content
+        assert_eq!(buf[(0, 0)].symbol(), "h");
+        assert_eq!(buf[(4, 0)].symbol(), "o");
     }
 }
