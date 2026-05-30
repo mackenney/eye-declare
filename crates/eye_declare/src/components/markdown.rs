@@ -112,6 +112,7 @@ struct RenderState<'a> {
     blockquote_depth: u32,
     in_code_block: bool,
     table_state: Option<TableState>,
+    pending_list_marker: Option<String>,
 }
 
 #[derive(Clone)]
@@ -135,6 +136,7 @@ impl<'a> RenderState<'a> {
             blockquote_depth: 0,
             in_code_block: false,
             table_state: None,
+            pending_list_marker: None,
         }
     }
 
@@ -178,9 +180,17 @@ impl<'a> RenderState<'a> {
     }
 
     fn emit_text(&mut self, text: &str) {
+        self.flush_pending_marker();
         if !text.is_empty() {
             self.current_spans
                 .push(Span::styled(text.to_string(), self.current_style()));
+        }
+    }
+
+    fn flush_pending_marker(&mut self) {
+        if let Some(marker) = self.pending_list_marker.take() {
+            self.current_spans
+                .push(Span::styled(marker, self.styles.marker_style));
         }
     }
 
@@ -273,15 +283,15 @@ impl<'a> RenderState<'a> {
                         ctx.next_number += 1;
                         m
                     } else {
-                        format!("{}• ", indent)
+                        format!("{}\u{2022} ", indent)
                     }
                 } else {
-                    "• ".to_string()
+                    "\u{2022} ".to_string()
                 };
-                self.current_spans
-                    .push(Span::styled(marker, self.styles.marker_style));
+                self.pending_list_marker = Some(marker);
             }
             Event::End(TagEnd::Item) => {
+                self.flush_pending_marker();
                 self.flush_line();
             }
 
@@ -331,6 +341,7 @@ impl<'a> RenderState<'a> {
             }
 
             Event::Code(text) => {
+                self.flush_pending_marker();
                 self.current_spans
                     .push(Span::styled(text.to_string(), self.styles.code_style));
             }
@@ -365,6 +376,7 @@ impl<'a> RenderState<'a> {
             }
 
             Event::TaskListMarker(checked) => {
+                self.pending_list_marker = None;
                 let marker = if checked { "[x] " } else { "[ ] " };
                 self.current_spans
                     .push(Span::styled(marker.to_string(), self.styles.marker_style));
@@ -412,6 +424,9 @@ impl<'a> RenderState<'a> {
                 Event::Code(text) if in_cell => {
                     current_cell.push_str(&text);
                 }
+                Event::SoftBreak if in_cell => {
+                    current_cell.push(' ');
+                }
                 _ => {}
             }
         }
@@ -422,7 +437,7 @@ impl<'a> RenderState<'a> {
         }
 
         let available_width: usize = 120;
-        let border_overhead = 1 + num_cols + 1;
+        let border_overhead = num_cols + 1;
 
         let mut natural_widths: Vec<usize> =
             header_cells.iter().map(|c| c.chars().count()).collect();
@@ -505,14 +520,14 @@ impl<'a> RenderState<'a> {
         for (cell, &width) in cells.iter().zip(widths.iter()) {
             let content_width = width - 2;
             let truncated: String = cell.chars().take(content_width).collect();
-            let padded = format!(" {:width$}", truncated, width = content_width);
+            let padded = format!(" {:<width$} ", truncated, width = content_width);
             spans.push(Span::styled(padded, style));
             spans.push(Span::styled("│".to_string(), self.styles.base_style));
         }
 
         for &width in widths.iter().skip(cells.len()) {
             let content_width = width - 2;
-            let padded = format!(" {:width$}", "", width = content_width);
+            let padded = format!(" {:<width$} ", "", width = content_width);
             spans.push(Span::styled(padded, style));
             spans.push(Span::styled("│".to_string(), self.styles.base_style));
         }
@@ -563,91 +578,6 @@ fn markdown(props: &Markdown, state: &MarkdownState) -> Elements {
     els
 }
 
-/// Convert a pulldown-cmark event to an owned ('static) version.
-fn event_to_owned(event: Event<'_>) -> Event<'static> {
-    match event {
-        Event::Start(tag) => Event::Start(tag_to_owned(tag)),
-        Event::End(tag_end) => Event::End(tag_end),
-        Event::Text(text) => Event::Text(text.to_string().into()),
-        Event::Code(text) => Event::Code(text.to_string().into()),
-        Event::Html(text) => Event::Html(text.to_string().into()),
-        Event::InlineHtml(text) => Event::InlineHtml(text.to_string().into()),
-        Event::FootnoteReference(text) => Event::FootnoteReference(text.to_string().into()),
-        Event::SoftBreak => Event::SoftBreak,
-        Event::HardBreak => Event::HardBreak,
-        Event::Rule => Event::Rule,
-        Event::TaskListMarker(checked) => Event::TaskListMarker(checked),
-        Event::InlineMath(text) => Event::InlineMath(text.to_string().into()),
-        Event::DisplayMath(text) => Event::DisplayMath(text.to_string().into()),
-    }
-}
-
-fn tag_to_owned(tag: Tag<'_>) -> Tag<'static> {
-    match tag {
-        Tag::Paragraph => Tag::Paragraph,
-        Tag::Heading {
-            level,
-            id,
-            classes,
-            attrs,
-        } => Tag::Heading {
-            level,
-            id: id.map(|s| s.to_string().into()),
-            classes: classes.into_iter().map(|s| s.to_string().into()).collect(),
-            attrs: attrs
-                .into_iter()
-                .map(|(k, v)| (k.to_string().into(), v.map(|s| s.to_string().into())))
-                .collect(),
-        },
-        Tag::BlockQuote(kind) => Tag::BlockQuote(kind),
-        Tag::CodeBlock(kind) => Tag::CodeBlock(match kind {
-            pulldown_cmark::CodeBlockKind::Indented => pulldown_cmark::CodeBlockKind::Indented,
-            pulldown_cmark::CodeBlockKind::Fenced(lang) => {
-                pulldown_cmark::CodeBlockKind::Fenced(lang.to_string().into())
-            }
-        }),
-        Tag::List(start) => Tag::List(start),
-        Tag::Item => Tag::Item,
-        Tag::FootnoteDefinition(text) => Tag::FootnoteDefinition(text.to_string().into()),
-        Tag::DefinitionList => Tag::DefinitionList,
-        Tag::DefinitionListTitle => Tag::DefinitionListTitle,
-        Tag::DefinitionListDefinition => Tag::DefinitionListDefinition,
-        Tag::Table(alignments) => Tag::Table(alignments),
-        Tag::TableHead => Tag::TableHead,
-        Tag::TableRow => Tag::TableRow,
-        Tag::TableCell => Tag::TableCell,
-        Tag::Emphasis => Tag::Emphasis,
-        Tag::Strong => Tag::Strong,
-        Tag::Strikethrough => Tag::Strikethrough,
-        Tag::Link {
-            link_type,
-            dest_url,
-            title,
-            id,
-        } => Tag::Link {
-            link_type,
-            dest_url: dest_url.to_string().into(),
-            title: title.to_string().into(),
-            id: id.to_string().into(),
-        },
-        Tag::Image {
-            link_type,
-            dest_url,
-            title,
-            id,
-        } => Tag::Image {
-            link_type,
-            dest_url: dest_url.to_string().into(),
-            title: title.to_string().into(),
-            id: id.to_string().into(),
-        },
-        Tag::HtmlBlock => Tag::HtmlBlock,
-        Tag::MetadataBlock(kind) => Tag::MetadataBlock(kind),
-        Tag::Superscript => Tag::Superscript,
-        Tag::Subscript => Tag::Subscript,
-    }
-}
-
 /// Parse markdown source into styled ratatui Text.
 fn render_markdown(source: &str, styles: &MarkdownState) -> Text<'static> {
     let options =
@@ -657,7 +587,7 @@ fn render_markdown(source: &str, styles: &MarkdownState) -> Text<'static> {
     let mut state = RenderState::new(styles);
 
     for event in parser {
-        state.process_event(event_to_owned(event));
+        state.process_event(event.into_static());
     }
 
     state.finish()
