@@ -766,4 +766,228 @@ mod tests {
         let text = render_markdown(&md.source, &state);
         assert!(text.lines.len() >= 5);
     }
+
+    #[test]
+    fn table_basic_structure() {
+        let md = Markdown::new("| A | B |\n|---|---|\n| 1 | 2 |");
+        let state = MarkdownState::new();
+        let text = render_markdown(&md.source, &state);
+        assert!(text.lines.len() >= 5, "table should have at least 5 lines");
+        let full_text: String = text
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(full_text.contains("┌"), "should have top-left corner");
+        assert!(full_text.contains("┘"), "should have bottom-right corner");
+        assert!(full_text.contains("│"), "should have column dividers");
+    }
+
+    #[test]
+    fn table_header_is_bold() {
+        let md = Markdown::new("| Header |\n|--------|\n| Cell |");
+        let state = MarkdownState::new();
+        let text = render_markdown(&md.source, &state);
+        let header_line = text
+            .lines
+            .iter()
+            .find(|l| l.spans.iter().any(|s| s.content.contains("Header")))
+            .expect("should have header line");
+        let header_span = header_line
+            .spans
+            .iter()
+            .find(|s| s.content.contains("Header"))
+            .expect("should have header span");
+        assert!(
+            header_span.style.add_modifier.contains(Modifier::BOLD),
+            "header should be bold"
+        );
+    }
+
+    #[test]
+    fn table_row_separators() {
+        let md = Markdown::new("| A |\n|---|\n| 1 |\n| 2 |");
+        let state = MarkdownState::new();
+        let text = render_markdown(&md.source, &state);
+        let full_text: String = text
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        let separator_count = full_text.matches('├').count();
+        assert!(
+            separator_count >= 2,
+            "should have separators between all rows, found {}",
+            separator_count
+        );
+    }
+
+    #[test]
+    fn ordered_list_numbered() {
+        let md = Markdown::new("1. first\n2. second\n3. third");
+        let state = MarkdownState::new();
+        let text = render_markdown(&md.source, &state);
+        let full_text: String = text
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(full_text.contains("1."), "should have '1.'");
+        assert!(full_text.contains("2."), "should have '2.'");
+        assert!(full_text.contains("3."), "should have '3.'");
+    }
+
+    #[test]
+    fn nested_list_indented() {
+        let md = Markdown::new("- parent\n  - child\n  - child2\n- parent2");
+        let state = MarkdownState::new();
+        let text = render_markdown(&md.source, &state);
+        assert!(text.lines.len() >= 4, "should have at least 4 list items");
+    }
+
+    #[test]
+    fn strikethrough_modifier() {
+        let md = Markdown::new("This is ~~deleted~~ text");
+        let state = MarkdownState::new();
+        let text = render_markdown(&md.source, &state);
+        let strike_span = text.lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content.contains("deleted"))
+            .expect("should have deleted span");
+        assert!(
+            strike_span
+                .style
+                .add_modifier
+                .contains(Modifier::CROSSED_OUT),
+            "strikethrough should have CROSSED_OUT modifier"
+        );
+    }
+
+    #[test]
+    fn horizontal_rule() {
+        let md = Markdown::new("above\n\n---\n\nbelow");
+        let state = MarkdownState::new();
+        let text = render_markdown(&md.source, &state);
+        let full_text: String = text
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            full_text.contains("─"),
+            "should have horizontal rule character"
+        );
+    }
+
+    #[test]
+    fn link_underlined() {
+        let md = Markdown::new("Click [here](http://example.com) for more");
+        let state = MarkdownState::new();
+        let text = render_markdown(&md.source, &state);
+        let link_span = text.lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content.contains("here"))
+            .expect("should have link text span");
+        assert!(
+            link_span.style.add_modifier.contains(Modifier::UNDERLINED),
+            "link text should be underlined"
+        );
+        let full_text: String = text
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(
+            !full_text.contains("http://"),
+            "URL should not appear in rendered text"
+        );
+    }
+
+    #[test]
+    fn task_list_unchecked() {
+        let md = Markdown::new("- [ ] todo item");
+        let state = MarkdownState::new();
+        let text = render_markdown(&md.source, &state);
+        let full_text: String = text
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(full_text.contains("[ ]"), "should have unchecked marker");
+    }
+
+    #[test]
+    fn task_list_checked() {
+        let md = Markdown::new("- [x] done item");
+        let state = MarkdownState::new();
+        let text = render_markdown(&md.source, &state);
+        let full_text: String = text
+            .lines
+            .iter()
+            .flat_map(|l| l.spans.iter().map(|s| s.content.as_ref()))
+            .collect();
+        assert!(full_text.contains("[x]"), "should have checked marker");
+    }
+
+    #[test]
+    fn heading_h1_underlined() {
+        let md = Markdown::new("# Title");
+        let state = MarkdownState::new();
+        let text = render_markdown(&md.source, &state);
+        let title_span = text.lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content.contains("Title"))
+            .expect("should have title span");
+        assert!(
+            title_span.style.add_modifier.contains(Modifier::UNDERLINED),
+            "H1 should be underlined"
+        );
+        assert!(
+            title_span.style.add_modifier.contains(Modifier::BOLD),
+            "H1 should be bold (from heading_style)"
+        );
+    }
+
+    #[test]
+    fn heading_h2_bold_not_underlined() {
+        let md = Markdown::new("## Subtitle");
+        let state = MarkdownState::new();
+        let text = render_markdown(&md.source, &state);
+        let subtitle_span = text.lines[0]
+            .spans
+            .iter()
+            .find(|s| s.content.contains("Subtitle"))
+            .expect("should have subtitle span");
+        assert!(
+            subtitle_span.style.add_modifier.contains(Modifier::BOLD),
+            "H2 should be bold"
+        );
+        assert!(
+            !subtitle_span
+                .style
+                .add_modifier
+                .contains(Modifier::UNDERLINED),
+            "H2 should NOT be underlined"
+        );
+    }
+
+    #[test]
+    fn heading_h3_shows_prefix() {
+        let md = Markdown::new("### Section");
+        let state = MarkdownState::new();
+        let text = render_markdown(&md.source, &state);
+        let full_text: String = text.lines[0]
+            .spans
+            .iter()
+            .map(|s| s.content.as_ref())
+            .collect();
+        assert!(
+            full_text.contains("###"),
+            "H3 should show ### prefix, got: {}",
+            full_text
+        );
+    }
 }
