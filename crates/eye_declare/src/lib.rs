@@ -176,7 +176,7 @@ pub(crate) mod context;
 pub(crate) mod escape;
 pub(crate) mod frame;
 pub(crate) mod node;
-pub mod renderer;
+pub(crate) mod renderer;
 pub(crate) mod wrap;
 
 pub use app::{
@@ -202,9 +202,6 @@ pub use hooks::Hooks;
 pub use inline::InlineRenderer;
 pub use insets::Insets;
 pub use node::{Layout, NodeId, WidthConstraint};
-pub use renderer::{
-    VIEW_CALLS, VIEW_SKIPS, reset_perf_counters, thread_view_calls, thread_view_skips,
-};
 pub use typed_builder::TypedBuilder;
 
 // Re-exports for component props
