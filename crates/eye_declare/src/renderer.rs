@@ -4913,9 +4913,7 @@ mod tests {
         impl Component for MemoComp {
             type State = ();
             fn should_update(&self, old_props: &dyn std::any::Any) -> bool {
-                old_props
-                    .downcast_ref::<Self>()
-                    .map_or(true, |old| self != old)
+                old_props.downcast_ref::<Self>() != Some(self)
             }
         }
 
@@ -4949,9 +4947,7 @@ mod tests {
         impl Component for MemoComp {
             type State = ();
             fn should_update(&self, old_props: &dyn std::any::Any) -> bool {
-                old_props
-                    .downcast_ref::<Self>()
-                    .map_or(true, |old| self != old)
+                old_props.downcast_ref::<Self>() != Some(self)
             }
         }
 
@@ -4987,9 +4983,7 @@ mod tests {
         impl Component for MemoComp {
             type State = ();
             fn should_update(&self, old_props: &dyn std::any::Any) -> bool {
-                old_props
-                    .downcast_ref::<Self>()
-                    .map_or(true, |old| self != old)
+                old_props.downcast_ref::<Self>() != Some(self)
             }
         }
 
