@@ -767,6 +767,11 @@ impl Renderer {
                     // This is the memo fast-path — equivalent to React.memo skipping render.
                     // Children are preserved as-is; force_dirty stays false so the pixel
                     // render cache is also reused.
+                    debug_assert!(
+                        entry.children.is_none(),
+                        "PropsMemo fast-path cannot process slot children: entry.children would be \
+                         silently discarded. Slot children require force_dirty reconciliation."
+                    );
                 }
                 old_id
             } else {
