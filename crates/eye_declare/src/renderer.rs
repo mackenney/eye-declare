@@ -1,5 +1,7 @@
 use std::any::{Any, TypeId};
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use ratatui_core::{buffer::Buffer, layout::Rect};
@@ -12,6 +14,36 @@ use crate::node::{
     CallSite, Effect, EffectKind, Layout, Node, NodeArena, NodeId, TypedEffectHandler,
     WidthConstraint,
 };
+
+// Per-thread view-call and skip counters. Thread-local so parallel tests don't
+// interfere. Reset by reset_perf_counters(); read via thread_view_calls/skips().
+thread_local! {
+    static TL_VIEW_CALLS: Cell<usize> = const { Cell::new(0) };
+    static TL_VIEW_SKIPS: Cell<usize> = const { Cell::new(0) };
+}
+
+/// Global process-level counters (for use in non-test runtime logging).
+pub static VIEW_CALLS: AtomicUsize = AtomicUsize::new(0);
+/// Global process-level memo-skip counter.
+pub static VIEW_SKIPS: AtomicUsize = AtomicUsize::new(0);
+
+/// Reset both per-thread and global perf counters to zero.
+pub fn reset_perf_counters() {
+    TL_VIEW_CALLS.with(|c| c.set(0));
+    TL_VIEW_SKIPS.with(|c| c.set(0));
+    VIEW_CALLS.store(0, Ordering::Relaxed);
+    VIEW_SKIPS.store(0, Ordering::Relaxed);
+}
+
+/// Read the per-thread view-calls counter (test-safe).
+pub fn thread_view_calls() -> usize {
+    TL_VIEW_CALLS.with(|c| c.get())
+}
+
+/// Read the per-thread view-skips counter (test-safe).
+pub fn thread_view_skips() -> usize {
+    TL_VIEW_SKIPS.with(|c| c.get())
+}
 
 /// Manages a tree of components and renders them into a Frame.
 ///
@@ -756,15 +788,22 @@ impl Renderer {
                 self.nodes[old_id].has_slot = entry.children.is_some();
                 if props_changed {
                     self.nodes[old_id].force_dirty = true;
+                    VIEW_CALLS.fetch_add(1, Ordering::Relaxed);
+                    TL_VIEW_CALLS.with(|c| c.set(c.get() + 1));
+                    let (provided, resolved) = self.update_node(old_id, entry.children);
+                    let saved = self.push_context(provided);
+                    if let Some(els) = resolved {
+                        self.reconcile_children(old_id, els.into_items());
+                    }
+                    self.pop_context(saved);
+                } else {
+                    // Props unchanged: skip view() and child reconciliation entirely.
+                    // This is the memo fast-path — equivalent to React.memo skipping render.
+                    // Children are preserved as-is; force_dirty stays false so the pixel
+                    // render cache is also reused.
+                    VIEW_SKIPS.fetch_add(1, Ordering::Relaxed);
+                    TL_VIEW_SKIPS.with(|c| c.set(c.get() + 1));
                 }
-                let (provided, resolved) = self.update_node(old_id, entry.children);
-                let saved = self.push_context(provided);
-
-                if let Some(els) = resolved {
-                    self.reconcile_children(old_id, els.into_items());
-                }
-
-                self.pop_context(saved);
                 old_id
             } else {
                 // BUILD: create new node

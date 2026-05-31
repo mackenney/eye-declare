@@ -886,9 +886,15 @@ impl<S: Send + 'static> Application<S> {
     }
 
     fn rebuild(&mut self) {
+        crate::renderer::reset_perf_counters();
         let elements = (self.view_fn)(&self.state);
         self.inline.rebuild(self.container, elements);
         self.dirty = false;
+        if std::env::var("RHO_PERF").is_ok() {
+            let calls = crate::renderer::VIEW_CALLS.load(std::sync::atomic::Ordering::Relaxed);
+            let skips = crate::renderer::VIEW_SKIPS.load(std::sync::atomic::Ordering::Relaxed);
+            eprintln!("[perf] rebuild: view_calls={calls} view_skips={skips}");
+        }
     }
 
     fn apply_tracked_update(&mut self, update: TrackedStateUpdateFn<S>) {
