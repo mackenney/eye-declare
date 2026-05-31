@@ -73,9 +73,26 @@ use proc_macro::TokenStream;
 ///     // CardProps(visible: true)           // compile error — title is required
 /// }
 /// ```
+///
+/// # Memoization
+///
+/// `#[props]` automatically derives `PartialEq` and implements `PropsMemo`
+/// for the struct. This enables `#[component(memo)]` to compare old and new
+/// props and skip re-rendering when they're equal.
+///
+/// If the struct contains fields that don't implement `PartialEq` (closures,
+/// trait objects, etc.), use `#[props(no_memo)]` to suppress the automatic
+/// `PartialEq` derive and `PropsMemo` impl:
+///
+/// ```ignore
+/// #[props(no_memo)]
+/// struct CanvasProps {
+///     pub render_fn: Box<dyn Fn(&mut Buffer, Rect) + Send + Sync>,
+/// }
+/// ```
 #[proc_macro_attribute]
-pub fn props(_attr: TokenStream, input: TokenStream) -> TokenStream {
-    match props::props_impl(input.into()) {
+pub fn props(attr: TokenStream, input: TokenStream) -> TokenStream {
+    match props::props_impl(attr.into(), input.into()) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }
@@ -104,6 +121,10 @@ fn element_impl(input: proc_macro2::TokenStream) -> syn::Result<proc_macro2::Tok
 /// - `props = Type` — **required**. The struct that becomes the Component.
 /// - `state = Type` — optional. The component's state type. Defaults to `()`.
 /// - `children = Elements` — optional. Generates slot children support (`impl_slot_children!`).
+/// - `memo` — optional flag. When present, generates a `should_update` override
+///   that compares props using `PropsMemo`. The props type must implement `PropsMemo`
+///   (automatic with `#[props]`, or manual impl). Components without `memo` always
+///   re-render when their parent rebuilds (default behavior).
 ///
 /// # Example
 ///

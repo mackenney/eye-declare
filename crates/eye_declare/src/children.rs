@@ -170,6 +170,7 @@ impl<C: Component> AddTo<Elements> for ComponentWithSlot<C> {
 /// // #[component(props = MyText, children = DataChildren<TextChild>)]
 /// // fn my_text(props: &MyText, children: &DataChildren<TextChild>) -> Elements { ... }
 /// ```
+#[derive(PartialEq)]
 pub struct DataChildren<T>(Vec<T>);
 
 impl<T> DataChildren<T> {

@@ -1086,3 +1086,80 @@ mod component_tests {
         );
     }
 }
+
+mod memo_pipeline_tests {
+    use eye_declare::{Component, InlineRenderer, PropsMemo, VStack, element, props};
+    use ratatui_core::{buffer::Buffer, layout::Rect};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    // #[props] auto-derives: TypedBuilder + PartialEq + PropsMemo
+    #[props]
+    struct LeafProps {
+        pub value: u32,
+    }
+
+    // Pixel render counter — incremented only by render_erased, not by the view function.
+    // This is a leaf component: it has no children, so force_dirty=false means
+    // render_erased is skipped and RENDER_COUNT is NOT incremented.
+    static RENDER_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+    // Manually implement Component using PropsMemo from #[props].
+    // This is equivalent to what #[component(memo)] generates for should_update.
+    impl Component for LeafProps {
+        type State = ();
+
+        fn should_update(&self, old_props: &dyn std::any::Any) -> bool {
+            PropsMemo::props_changed(self, old_props)
+        }
+
+        fn desired_height(&self, _width: u16, _state: &()) -> Option<u16> {
+            Some(1) // static height avoids probe renders so RENDER_COUNT only counts real renders
+        }
+
+        fn render(&self, _area: Rect, _buf: &mut Buffer, _state: &()) {
+            RENDER_COUNT.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    #[test]
+    fn props_macro_plus_component_memo_skips_rerender_on_equal_props() {
+        RENDER_COUNT.store(0, Ordering::SeqCst);
+
+        let mut renderer = InlineRenderer::new_with_height(80, 24);
+        let container = renderer.push(VStack);
+
+        // First render with value=1: state is dirty on first build → render_erased called
+        let els = element! { LeafProps(value: 1u32) };
+        renderer.rebuild(container, els);
+        renderer.render();
+        let renders_after_first = RENDER_COUNT.load(Ordering::SeqCst);
+        assert!(
+            renders_after_first >= 1,
+            "sanity: first render must fire (state starts dirty)"
+        );
+
+        // Second render with same value=1: should_update returns false → force_dirty NOT set
+        // → render_erased skipped → RENDER_COUNT unchanged
+        let els = element! { LeafProps(value: 1u32) };
+        renderer.rebuild(container, els);
+        renderer.render();
+        let renders_after_second = RENDER_COUNT.load(Ordering::SeqCst);
+
+        assert_eq!(
+            renders_after_first, renders_after_second,
+            "memoized component should not re-render when props are equal"
+        );
+
+        // Third render with value=2: should_update returns true → force_dirty set
+        // → render_erased called → RENDER_COUNT incremented
+        let els = element! { LeafProps(value: 2u32) };
+        renderer.rebuild(container, els);
+        renderer.render();
+        let renders_after_third = RENDER_COUNT.load(Ordering::SeqCst);
+
+        assert!(
+            renders_after_third > renders_after_second,
+            "memoized component should re-render when props change"
+        );
+    }
+}

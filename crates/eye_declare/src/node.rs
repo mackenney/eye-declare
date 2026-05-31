@@ -49,6 +49,8 @@ pub enum WidthConstraint {
 pub(crate) trait AnyComponent: Send + Sync {
     /// Return the component's props as `&dyn Any` for hook callbacks.
     fn props_as_any(&self) -> &dyn Any;
+    #[allow(dead_code)] // used in step-02 PropsMemo and future memo path
+    fn should_update_erased(&self, old_props: &dyn Any) -> bool;
     fn render_erased(&self, area: Rect, buf: &mut Buffer, state: &dyn Any);
     fn desired_height_erased(&self, width: u16, state: &dyn Any) -> Option<u16>;
     fn handle_event_capture_erased(
@@ -77,6 +79,10 @@ pub(crate) trait AnyComponent: Send + Sync {
 impl<C: Component> AnyComponent for C {
     fn props_as_any(&self) -> &dyn Any {
         Component::props_as_any(self)
+    }
+
+    fn should_update_erased(&self, old_props: &dyn Any) -> bool {
+        self.should_update(old_props)
     }
 
     fn render_erased(&self, area: Rect, buf: &mut Buffer, state: &dyn Any) {

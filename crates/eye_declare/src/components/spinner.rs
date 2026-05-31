@@ -41,7 +41,7 @@ const FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"
 /// All visual aspects are configurable via struct fields:
 /// `label_style`, `spinner_style`, `done_label_style`, `checkmark_style`,
 /// `label_first` (swap label/spinner order), and `hide_checkmark`.
-#[derive(typed_builder::TypedBuilder)]
+#[derive(PartialEq, typed_builder::TypedBuilder)]
 pub struct Spinner {
     /// Text displayed next to the spinner animation.
     #[builder(default, setter(into))]
@@ -143,6 +143,12 @@ impl Spinner {
     }
 }
 
+impl crate::PropsMemo for Spinner {
+    fn props_changed(&self, old: &dyn std::any::Any) -> bool {
+        old.downcast_ref::<Self>() != Some(self)
+    }
+}
+
 /// Internal state for a [`Spinner`] component.
 ///
 /// Tracks the current animation frame. You typically don't interact
@@ -173,7 +179,7 @@ impl Default for SpinnerState {
     }
 }
 
-#[eye_declare_macros::component(props = Spinner, state = SpinnerState, initial_state = SpinnerState::new(), crate_path = crate)]
+#[eye_declare_macros::component(props = Spinner, state = SpinnerState, initial_state = SpinnerState::new(), memo, crate_path = crate)]
 fn spinner(
     props: &Spinner,
     state: &SpinnerState,

@@ -10,7 +10,9 @@ use crate::renderer::Renderer;
 /// instead, which gets `Element` automatically via blanket impl.
 pub(crate) trait Element: Send {
     fn build(self: Box<Self>, renderer: &mut Renderer, parent: NodeId) -> NodeId;
-    fn update(self: Box<Self>, _renderer: &mut Renderer, _node_id: NodeId) {}
+    fn update(self: Box<Self>, _renderer: &mut Renderer, _node_id: NodeId) -> bool {
+        true
+    }
 }
 
 /// Blanket implementation: every Component is automatically an Element.
@@ -22,8 +24,10 @@ impl<C: Component> Element for C {
         renderer.append_child(parent, *self)
     }
 
-    fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) {
+    fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) -> bool {
+        let should = self.should_update(renderer.old_props_as_any(node_id));
         renderer.swap_component(node_id, *self);
+        should
     }
 }
 

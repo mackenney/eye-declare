@@ -31,7 +31,7 @@ use crate::components::Canvas;
 ///     Markdown(key: "response", source: response_text.clone())
 /// }
 /// ```
-#[derive(Default, typed_builder::TypedBuilder)]
+#[derive(Default, PartialEq, typed_builder::TypedBuilder)]
 pub struct Markdown {
     /// The markdown source text to render.
     #[builder(default, setter(into))]
@@ -44,6 +44,12 @@ impl Markdown {
         Self {
             source: source.into(),
         }
+    }
+}
+
+impl crate::PropsMemo for Markdown {
+    fn props_changed(&self, old: &dyn std::any::Any) -> bool {
+        old.downcast_ref::<Self>() != Some(self)
     }
 }
 
@@ -557,7 +563,7 @@ impl<'a> RenderState<'a> {
     }
 }
 
-#[eye_declare_macros::component(props = Markdown, state = MarkdownState, initial_state = MarkdownState::new(), crate_path = crate)]
+#[eye_declare_macros::component(props = Markdown, state = MarkdownState, initial_state = MarkdownState::new(), memo, crate_path = crate)]
 fn markdown(props: &Markdown, state: &MarkdownState) -> Elements {
     if props.source.is_empty() {
         return Elements::new();

@@ -64,6 +64,21 @@ pub enum EventResult {
     Ignored,
 }
 
+/// Helper trait for prop comparison in memoized components.
+///
+/// Implemented automatically by the `#[props]` macro for types that
+/// derive `PartialEq`. Used by `#[component(memo)]` to generate
+/// `should_update` implementations.
+///
+/// Manual implementation is supported for custom comparison logic.
+pub trait PropsMemo: 'static {
+    /// Return `true` if props have changed (component should re-render).
+    ///
+    /// `old` is the result of `props_as_any()` on the previous component.
+    /// Implementations downcast `old` to `Self` and compare.
+    fn props_changed(&self, old: &dyn std::any::Any) -> bool;
+}
+
 /// Wrapper that automatically marks component state dirty on mutation.
 ///
 /// The framework wraps each component's `State` in `Tracked<S>`.
@@ -271,6 +286,20 @@ pub trait Component: Send + Sync + 'static {
         Self: Sized,
     {
         self
+    }
+
+    /// Whether this component should re-render after receiving new props.
+    ///
+    /// Called during reconciliation when a node is reused with new props.
+    /// `old_props` is `props_as_any()` on the previous component instance,
+    /// before the swap. Return `false` to skip re-rendering when props are
+    /// unchanged.
+    ///
+    /// The default returns `true` (always re-render). Components using
+    /// `#[component(memo)]` override this automatically via `PropsMemo`.
+    #[doc(hidden)]
+    fn should_update(&self, _old_props: &dyn std::any::Any) -> bool {
+        true
     }
 
     /// Primitive: render into a buffer region. Only for hand-written

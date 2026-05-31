@@ -36,6 +36,7 @@ struct ComponentArgs {
     children: Option<syn::Type>,
     initial_state: Option<syn::Expr>,
     crate_path: Option<syn::Path>,
+    memo: bool,
 }
 
 impl syn::parse::Parse for ComponentArgs {
@@ -46,30 +47,38 @@ impl syn::parse::Parse for ComponentArgs {
         let mut initial_state = None;
         let mut initial_state_key_span: Option<proc_macro2::Span> = None;
         let mut crate_path = None;
+        let mut memo = false;
 
         while !input.is_empty() {
             let key: Ident = input.parse()?;
-            input.parse::<Token![=]>()?;
 
             match key.to_string().as_str() {
+                "memo" => {
+                    memo = true;
+                }
                 "initial_state" => {
+                    input.parse::<Token![=]>()?;
                     initial_state_key_span = Some(key.span());
                     let expr: syn::Expr = input.parse()?;
                     initial_state = Some(expr);
                 }
                 "props" => {
+                    input.parse::<Token![=]>()?;
                     let value: Ident = input.parse()?;
                     props = Some(value);
                 }
                 "state" => {
+                    input.parse::<Token![=]>()?;
                     let value: Ident = input.parse()?;
                     state = Some(value);
                 }
                 "children" => {
+                    input.parse::<Token![=]>()?;
                     let value: syn::Type = input.parse()?;
                     children = Some(value);
                 }
                 "crate_path" => {
+                    input.parse::<Token![=]>()?;
                     let value: syn::Path = input.parse()?;
                     crate_path = Some(value);
                 }
@@ -103,6 +112,7 @@ impl syn::parse::Parse for ComponentArgs {
             children,
             initial_state,
             crate_path,
+            memo,
         })
     }
 }
@@ -199,7 +209,6 @@ pub fn component_impl(attr: TokenStream, input: TokenStream) -> syn::Result<Toke
     };
 
     if has_children && !is_slot_children {
-        // --- Data children path ---
         generate_data_children(
             &func,
             func_name,
@@ -210,9 +219,9 @@ pub fn component_impl(attr: TokenStream, input: TokenStream) -> syn::Result<Toke
             has_hooks,
             &initial_state_impl,
             args.children.as_ref().unwrap(),
+            args.memo,
         )
     } else {
-        // --- Slot children (Elements) or no children ---
         generate_slot_or_none(
             &func,
             func_name,
@@ -223,6 +232,7 @@ pub fn component_impl(attr: TokenStream, input: TokenStream) -> syn::Result<Toke
             has_hooks,
             has_children,
             &initial_state_impl,
+            args.memo,
         )
     }
 }
@@ -239,6 +249,7 @@ fn generate_slot_or_none(
     has_hooks: bool,
     has_children: bool,
     initial_state_impl: &TokenStream,
+    memo: bool,
 ) -> syn::Result<TokenStream> {
     let update_call = {
         let mut call_args = vec![quote! { self }];
@@ -281,6 +292,16 @@ fn generate_slot_or_none(
         quote! {}
     };
 
+    let should_update_impl = if memo {
+        quote! {
+            fn should_update(&self, old_props: &dyn ::std::any::Any) -> bool {
+                <#props_type as #crate_path::PropsMemo>::props_changed(self, old_props)
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     Ok(quote! {
         #func
 
@@ -288,6 +309,7 @@ fn generate_slot_or_none(
             type State = #state_type;
 
             #initial_state_impl
+            #should_update_impl
             #update_impl
         }
 
@@ -313,6 +335,7 @@ fn generate_data_children(
     has_hooks: bool,
     initial_state_impl: &TokenStream,
     children_type: &syn::Type,
+    memo: bool,
 ) -> syn::Result<TokenStream> {
     let wrapper_name = format_ident!("__{props_type}WithData");
 
@@ -344,15 +367,34 @@ fn generate_data_children(
         quote! { #func_name(#(#call_args),*) }
     };
 
+    let props_should_update_impl = if memo {
+        quote! {
+            fn should_update(&self, old_props: &dyn ::std::any::Any) -> bool {
+                <#props_type as #crate_path::PropsMemo>::props_changed(self, old_props)
+            }
+        }
+    } else {
+        quote! {}
+    };
+
+    let wrapper_should_update_impl = if memo {
+        quote! {
+            fn should_update(&self, old_props: &dyn ::std::any::Any) -> bool {
+                <#props_type as #crate_path::PropsMemo>::props_changed(&self.__props, old_props)
+            }
+        }
+    } else {
+        quote! {}
+    };
+
     Ok(quote! {
         #func
 
-        // Component impl on props type: for usage without data children.
-        // Passes default (empty) data to the function.
         impl #crate_path::Component for #props_type {
             type State = #state_type;
 
             #initial_state_impl
+            #props_should_update_impl
 
             fn update(
                 &self,
@@ -365,24 +407,12 @@ fn generate_data_children(
             }
         }
 
-        // Hidden wrapper: props + collected data children.
         #[doc(hidden)]
         pub struct #wrapper_name {
             __props: #props_type,
             __data: #children_type,
         }
 
-        // Component impl on wrapper: for usage with data children.
-        // initial_state delegates to the inner props to avoid self-reference
-        // issues (self here is the wrapper, not the props struct).
-        //
-        // props_as_any returns the inner props (not self) so hook callbacks
-        // can downcast to the actual props type.
-        //
-        // update() receives Hooks<Self, State> (Self = wrapper) but the user
-        // function expects Hooks<Props, State>. Since Hooks uses P only as
-        // PhantomData, these types have identical layout and the pointer cast
-        // is sound.
         impl #crate_path::Component for #wrapper_name {
             type State = #state_type;
 
@@ -391,6 +421,8 @@ fn generate_data_children(
             fn initial_state(&self) -> Option<#state_type> {
                 self.__props.initial_state()
             }
+
+            #wrapper_should_update_impl
 
             fn update(
                 &self,
@@ -408,7 +440,6 @@ fn generate_data_children(
             }
         }
 
-        // ChildCollector: element! macro uses this when braces are present.
         impl #crate_path::ChildCollector for #props_type {
             type Collector = #children_type;
             type Output = #wrapper_name;

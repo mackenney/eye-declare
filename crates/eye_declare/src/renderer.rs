@@ -101,6 +101,12 @@ impl Renderer {
         self.nodes[id].width_constraint = width_constraint;
     }
 
+    /// Returns `props_as_any()` on the component currently stored at `id`.
+    /// Used by `Element::update` to read old props before swapping.
+    pub(crate) fn old_props_as_any(&self, id: NodeId) -> &dyn std::any::Any {
+        self.nodes[id].component.props_as_any()
+    }
+
     /// Shorthand: add a component as a child of the root. Returns its NodeId.
     pub fn push<C: Component>(&mut self, component: C) -> NodeId {
         self.append_child(self.root, component)
@@ -743,13 +749,14 @@ impl Renderer {
 
             let node_id = if let Some(old_id) = matched {
                 // REUSE: update props, preserve local state
-                entry.element.update(self, old_id);
+                let props_changed = entry.element.update(self, old_id);
                 self.nodes[old_id].parent = Some(parent);
                 self.nodes[old_id].width_constraint =
                     resolve_width_constraint(&self.nodes[old_id], entry.width_constraint);
                 self.nodes[old_id].has_slot = entry.children.is_some();
-                // Guarantee re-render after props update
-                self.nodes[old_id].force_dirty = true;
+                if props_changed {
+                    self.nodes[old_id].force_dirty = true;
+                }
                 let (provided, resolved) = self.update_node(old_id, entry.children);
                 let saved = self.push_context(provided);
 
@@ -2674,12 +2681,13 @@ mod tests {
             id
         }
 
-        fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) {
+        fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) -> bool {
             let state = renderer.state_mut::<TextBlock>(node_id);
             state.clear();
             for line in self.lines {
                 state.push(line);
             }
+            true
         }
     }
 
@@ -2879,10 +2887,11 @@ mod tests {
             id
         }
 
-        fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) {
+        fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) -> bool {
             let state = renderer.state_mut::<CounterWidget>(node_id);
             state.0 = self.label;
             // Don't reset build_count — it proves the node was reused
+            true
         }
     }
 
@@ -3362,7 +3371,7 @@ mod tests {
             id
         }
 
-        fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) {
+        fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) -> bool {
             let state = renderer.state_mut::<LifecycleWidget>(node_id);
             state
                 .log
@@ -3370,6 +3379,7 @@ mod tests {
             state.log.push(self.label.clone());
             state.mount_marker = self.mount_marker;
             state.unmount_marker = self.unmount_marker;
+            true
         }
     }
 
@@ -3922,10 +3932,11 @@ mod tests {
             id
         }
 
-        fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) {
+        fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) -> bool {
             let state = renderer.state_mut::<LabeledRow>(node_id);
             state.prefix = self.prefix;
             state.label = self.label;
+            true
         }
     }
 
@@ -4028,10 +4039,11 @@ mod tests {
             id
         }
 
-        fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) {
+        fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) -> bool {
             let state = renderer.state_mut::<BannerComponent>(node_id);
             state.clear();
             state.push_str(&self.title);
+            true
         }
     }
 
@@ -4122,10 +4134,11 @@ mod tests {
             id
         }
 
-        fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) {
+        fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) -> bool {
             let state = renderer.state_mut::<HookedCounter>(node_id);
             state.0 = self.label;
             // No effect management — lifecycle handles it
+            true
         }
     }
 
@@ -4238,8 +4251,9 @@ mod tests {
                 renderer.state_mut::<ShiftTest>(id).0 = self.mode;
                 id
             }
-            fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) {
+            fn update(self: Box<Self>, renderer: &mut Renderer, node_id: NodeId) -> bool {
                 renderer.state_mut::<ShiftTest>(node_id).0 = self.mode;
+                true
             }
         }
 
@@ -4323,7 +4337,9 @@ mod tests {
                 renderer.state_mut::<MountTracker>(id).push("built".into());
                 id
             }
-            fn update(self: Box<Self>, _renderer: &mut Renderer, _node_id: NodeId) {}
+            fn update(self: Box<Self>, _renderer: &mut Renderer, _node_id: NodeId) -> bool {
+                true
+            }
         }
 
         let mut els = Elements::new();
@@ -4815,6 +4831,186 @@ mod tests {
         assert!(
             !rects.contains_key("remove"),
             "removed node should not have a stale rect"
+        );
+    }
+
+    #[test]
+    fn memo_no_memo_always_force_dirty() {
+        #[derive(Default, Clone, PartialEq)]
+        struct NoMemoComp {
+            value: u32,
+        }
+        impl Component for NoMemoComp {
+            type State = ();
+        }
+
+        let mut r = Renderer::new(80);
+        let container = r.push(VStack);
+
+        let mut els = Elements::new();
+        els.add(NoMemoComp { value: 1 });
+        r.rebuild(container, els);
+
+        let child = r.children(container)[0];
+        r.nodes[child].force_dirty = false;
+
+        let mut els = Elements::new();
+        els.add(NoMemoComp { value: 1 });
+        r.rebuild(container, els);
+
+        let child = r.children(container)[0];
+        assert!(
+            r.nodes[child].force_dirty,
+            "component without memo should always have force_dirty set after reconcile"
+        );
+    }
+
+    #[test]
+    fn memo_skip_force_dirty_when_props_equal() {
+        #[derive(Default, Clone, PartialEq)]
+        struct MemoComp {
+            value: u32,
+        }
+        impl Component for MemoComp {
+            type State = ();
+            fn should_update(&self, old_props: &dyn std::any::Any) -> bool {
+                old_props
+                    .downcast_ref::<Self>()
+                    .map_or(true, |old| self != old)
+            }
+        }
+
+        let mut r = Renderer::new(80);
+        let container = r.push(VStack);
+
+        let mut els = Elements::new();
+        els.add(MemoComp { value: 1 });
+        r.rebuild(container, els);
+
+        let child = r.children(container)[0];
+        r.nodes[child].force_dirty = false;
+
+        let mut els = Elements::new();
+        els.add(MemoComp { value: 1 });
+        r.rebuild(container, els);
+
+        let child = r.children(container)[0];
+        assert!(
+            !r.nodes[child].force_dirty,
+            "memoized component with unchanged props should not have force_dirty set"
+        );
+    }
+
+    #[test]
+    fn memo_force_dirty_when_props_change() {
+        #[derive(Default, Clone, PartialEq)]
+        struct MemoComp {
+            value: u32,
+        }
+        impl Component for MemoComp {
+            type State = ();
+            fn should_update(&self, old_props: &dyn std::any::Any) -> bool {
+                old_props
+                    .downcast_ref::<Self>()
+                    .map_or(true, |old| self != old)
+            }
+        }
+
+        let mut r = Renderer::new(80);
+        let container = r.push(VStack);
+
+        let mut els = Elements::new();
+        els.add(MemoComp { value: 1 });
+        r.rebuild(container, els);
+
+        let child = r.children(container)[0];
+        r.nodes[child].force_dirty = false;
+
+        let mut els = Elements::new();
+        els.add(MemoComp { value: 2 });
+        r.rebuild(container, els);
+
+        let child = r.children(container)[0];
+        assert!(
+            r.nodes[child].force_dirty,
+            "memoized component with changed props should have force_dirty set"
+        );
+    }
+
+    #[test]
+    fn memo_element_update_returns_correct_bool() {
+        use crate::element::Element;
+
+        #[derive(Default, Clone, PartialEq)]
+        struct MemoComp {
+            value: u32,
+        }
+        impl Component for MemoComp {
+            type State = ();
+            fn should_update(&self, old_props: &dyn std::any::Any) -> bool {
+                old_props
+                    .downcast_ref::<Self>()
+                    .map_or(true, |old| self != old)
+            }
+        }
+
+        let mut r = Renderer::new(80);
+
+        let id1 = r.push(MemoComp { value: 1 });
+        let result1 = Box::new(MemoComp { value: 1 }).update(&mut r, id1);
+        assert!(
+            !result1,
+            "Element::update with same props should return false"
+        );
+
+        let id2 = r.push(MemoComp { value: 1 });
+        let result2 = Box::new(MemoComp { value: 2 }).update(&mut r, id2);
+        assert!(
+            result2,
+            "Element::update with changed props should return true"
+        );
+    }
+
+    #[test]
+    fn memo_default_should_update_always_true() {
+        use std::any::Any;
+
+        #[derive(Default, Clone)]
+        struct DefaultComp;
+        impl Component for DefaultComp {
+            type State = ();
+        }
+
+        let comp = DefaultComp;
+        assert!(
+            comp.should_update(&42u32 as &dyn Any),
+            "default should_update should return true for any old_props type"
+        );
+        assert!(
+            comp.should_update(&DefaultComp as &dyn Any),
+            "default should_update should return true even for same component type"
+        );
+    }
+
+    #[test]
+    fn memo_markdown_props_changed_uses_partial_eq() {
+        use crate::components::markdown::Markdown;
+        use crate::element::Element;
+
+        let mut r = Renderer::new(80);
+
+        let id1 = r.push(Markdown::new("# Hello"));
+        let result1 = Box::new(Markdown::new("# Hello")).update(&mut r, id1);
+        assert!(
+            !result1,
+            "Markdown with same source should return false from Element::update"
+        );
+
+        let id2 = r.push(Markdown::new("# Hello"));
+        let result2 = Box::new(Markdown::new("# World")).update(&mut r, id2);
+        assert!(
+            result2,
+            "Markdown with different source should return true from Element::update"
         );
     }
 }
