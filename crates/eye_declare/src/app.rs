@@ -40,7 +40,8 @@ type TrackedStateUpdateFn<S> = Box<dyn FnOnce(&mut TrackedRef<'_, S>) + Send>;
 type StateGetFn<S> = Box<dyn FnOnce(&S) + Send>;
 type ViewFn<S> = Box<dyn Fn(&S) -> Elements>;
 type CommitCallbackFn<S> = Box<dyn FnMut(&CommittedElement, &mut S)>;
-type EventHandlerFn<'a, S> = Option<&'a mut dyn FnMut(&Event, &mut S) -> ControlFlow>;
+type EventHandlerFn<'a, S> =
+    Option<&'a mut dyn FnMut(&Event, &mut TrackedRef<'_, S>) -> ControlFlow>;
 
 enum AppMessage<S> {
     UpdateState(StateUpdateFn<S>),
@@ -532,7 +533,7 @@ impl<S: Send + 'static> Application<S> {
     /// to raw terminal events.
     pub async fn run_interactive(
         &mut self,
-        mut handler: impl FnMut(&Event, &mut S) -> ControlFlow,
+        mut handler: impl FnMut(&Event, &mut TrackedRef<'_, S>) -> ControlFlow,
     ) -> io::Result<()> {
         let mut stdout = io::stdout();
 
@@ -729,9 +730,7 @@ impl<S: Send + 'static> Application<S> {
                     }
                 }
                 _ = tick_interval.tick(), if has_active => {
-                    if self.inline.tick() {
-                        self.dirty = true;
-                    }
+                    self.inline.tick();
                 }
             }
 
@@ -823,12 +822,18 @@ impl<S: Send + 'static> Application<S> {
                     } else {
                         // Framework handles first (focus routing, tab cycling)
                         let result = self.inline.handle_event(&evt);
-                        self.dirty = true;
+                        if result == EventResult::Consumed {
+                            self.dirty = true;
+                        }
 
                         // Then app handler, only if the component tree didn't consume the event
                         if result == EventResult::Ignored
                             && let Some(ref mut h) = handler {
-                                let flow = h(&evt, &mut self.state);
+                                let mut tracked = TrackedRef::new(&mut self.state);
+                                let flow = h(&evt, &mut tracked);
+                                if tracked.is_dirty() {
+                                    self.dirty = true;
+                                }
                                 if matches!(flow, ControlFlow::Exit) {
                                     break;
                                 }
@@ -856,9 +861,7 @@ impl<S: Send + 'static> Application<S> {
                 }
 
                 _ = tick_interval.tick(), if has_active => {
-                    if self.inline.tick() {
-                        self.dirty = true;
-                    }
+                    self.inline.tick();
                 }
             }
 

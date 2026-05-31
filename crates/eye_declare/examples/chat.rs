@@ -18,7 +18,7 @@ use std::time::Duration;
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 use eye_declare::{
     Application, BorderType, Canvas, Cells, ControlFlow, Elements, Handle, Hooks, Markdown, Span,
-    Text, View, component, element, props,
+    Text, TrackedRef, View, component, element, props,
 };
 use ratatui_core::{
     buffer::Buffer,
@@ -291,7 +291,7 @@ async fn main() -> io::Result<()> {
     app.flush(&mut io::stdout())?;
 
     let h = handle;
-    app.run_interactive(move |event, state| {
+    app.run_interactive(move |event, state: &mut TrackedRef<'_, AppState>| {
         if let Event::Key(KeyEvent {
             code,
             kind: KeyEventKind::Press,
@@ -305,12 +305,14 @@ async fn main() -> io::Result<()> {
 
             match code {
                 KeyCode::Char(c) => {
-                    state.input.insert(state.cursor, *c);
+                    let cursor = state.cursor;
+                    state.input.insert(cursor, *c);
                     state.cursor += c.len_utf8();
                 }
                 KeyCode::Backspace if state.cursor > 0 => {
                     state.cursor -= 1;
-                    state.input.remove(state.cursor);
+                    let cursor = state.cursor;
+                    state.input.remove(cursor);
                 }
                 KeyCode::Left => {
                     state.cursor = state.cursor.saturating_sub(1);
